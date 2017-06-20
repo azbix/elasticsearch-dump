@@ -197,7 +197,8 @@ var dump = function () {
       '--output=' + outputData,
       '--scrollTime=' + options.scrollTime,
       '--limit=' + options.limit,
-      '--offset=' + options.offset
+      '--offset=' + options.offset,
+      '--maxResults=' + options.maxResults
     ])
 
     dataChild.on('close', function (code) {
@@ -285,8 +286,7 @@ var load = function () {
       '--output=' + output,
       '--scrollTime=' + options.scrollTime,
       '--limit=' + options.limit,
-      '--offset=' + options.offset,
-	    '--maxResults=' + options.maxResults
+      '--offset=' + options.offset
     ])
 
     dataChild.on('close', function (code) {
