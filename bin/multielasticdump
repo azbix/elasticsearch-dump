@@ -3,8 +3,6 @@
 // I am a wrapper around basic elastcidump
 // I will source all indices from your elasticserach server and dump them out to .json and .mapping.json files
 // I probably only work on *nix hosts
-// dump --input must be a URL and --output must be a path on this system
-// index --input must be a a path on this system --output must be URL
 
 var argv = require('optimist').argv
 var fs = require('fs')
@@ -21,8 +19,15 @@ var complete = 0
 var indexCounter = 0
 var sleepTime = 1000
 var workTimeout
+var isIndexToIndex;
 
-function unique (arr, keepLast) {
+var directions = {
+  indexToIndex: 'dump-to-es',
+  indexToFiles: 'dump-to-files',
+  filesToIndex: 'load-from-files'
+}
+
+function unique(arr, keepLast) {
   return arr.filter(function (value, index, array) {
     return keepLast ? array.indexOf(value, index + 1) < 0 : array.indexOf(value) === index
   })
@@ -72,24 +77,15 @@ if (!options.output) { throw new Error('--output is required') }
 log('info', 'We are performing : ' + options.direction)
 log('info', 'options: ' + JSON.stringify(options))
 
-var matchRegExp = new RegExp(options.match, 'i')
-if (options.direction === 'dump') {
-  if (!fs.existsSync(options.output)) { throw new Error('--output does not exist') }
-  request.get(options.input + '/_aliases', function (err, response) {
-    if (err) { log('err', err); process.exit() }
-    response = JSON.parse(response.body)
-    if (!Array.isArray(response)) {
-      response = Object.keys(response)
-    }
-    matchedIndexes = response.filter(function (index) {
-      return matchRegExp.test(index)
-    })
+isIndexToIndex = options.direction == directions.indexToIndex
 
-    dumpWork()
-  })
+var matchRegExp = new RegExp(options.match, 'i')
+if (options.direction === directions.indexToFiles) {
+  if (!fs.existsSync(options.output)) { throw new Error('--output does not exist') }
+  scheduleDump()
 }
 
-if (options.direction === 'load') {
+if (options.direction === directions.filesToIndex) {
   if (!fs.existsSync(options.input)) { throw new Error('--input() does not exist') }
   fs.readdir(options.input, function (err, data) {
     if (err) { log('error', err); throw new Error('Something went wrong reading the list of files') }
@@ -103,6 +99,25 @@ if (options.direction === 'load') {
     log('info', 'list of indexes' + JSON.stringify(matchedIndexes))
 
     loadWork()
+  })
+}
+
+if (options.direction == directions.indexToIndex) {
+  scheduleDump()
+}
+
+function scheduleDump() {
+  request.get(options.input + '/_aliases', function (err, response) {
+    if (err) { log('err', err); process.exit() }
+    response = JSON.parse(response.body)
+    if (!Array.isArray(response)) {
+      response = Object.keys(response)
+    }
+    matchedIndexes = response.filter(function (index) {
+      return matchRegExp.test(index)
+    })
+
+    dumpWork()
   })
 }
 
@@ -146,19 +161,36 @@ var dump = function () {
   indexCounter++
 
   var input = options.input + '/' + encodeURIComponent(index)
-  var outputData = options.output + '/' + index + '.json'
-  var outputMapping = options.output + '/' + index + '.mapping.json'
-  var outputAnalyzer = options.output + '/' + index + '.analyzer.json'
+
+  var paramsMappings = getParamsMappings()
+
+  function getParamsMappings() {
+    var indexOutput = options.output + '/' + encodeURIComponent(index);
+
+    var filesData = {
+      mapping: options.output + '/' + index + '.mapping.json',
+      data: options.output + '/' + index + '.json',
+      analyzer: options.output + '/' + index + '.analyzer.json'
+    }
+
+    var indexData = {
+      mapping: indexOutput,
+      data: indexOutput,
+      analyzer: indexOutput
+    }
+
+    return isIndexToIndex ? filesData : indexData
+  }
 
   var jobs = []
 
   jobs.push(function (done) {
-    log('info', 'dumping ' + input + ' to ' + outputMapping)
+    log('info', 'dumping mapping ' + input + ' to ' + paramsMappings.mapping)
 
     var mappingChild = fork(path.join(__dirname, 'elasticdump'), [
       '--type=' + 'mapping',
       '--input=' + input,
-      '--output=' + outputMapping
+      '--output=' + paramsMappings.mapping
     ])
 
     mappingChild.on('close', function (code) {
@@ -171,12 +203,12 @@ var dump = function () {
   })
 
   jobs.push(function (done) {
-    log('info', 'analyzer ' + input + ' to ' + outputAnalyzer)
+    log('info', 'analyzer ' + input + ' to ' + paramsMappings.analyzer)
 
     var analyzerChild = fork(path.join(__dirname, 'elasticdump'), [
       '--type=' + 'analyzer',
       '--input=' + input,
-      '--output=' + outputAnalyzer
+      '--output=' + paramsMappings.analyzer
     ])
 
     analyzerChild.on('close', function (code) {
@@ -189,12 +221,12 @@ var dump = function () {
   })
 
   jobs.push(function (done) {
-    log('info', 'dumping ' + input + ' to ' + outputData)
+    log('info', 'dumping ' + input + ' to ' + paramsMappings.data)
 
     var dataChild = fork(path.join(__dirname, 'elasticdump'), [
       '--type=' + 'data',
       '--input=' + input,
-      '--output=' + outputData,
+      '--output=' + paramsMappings.data,
       '--scrollTime=' + options.scrollTime,
       '--limit=' + options.limit,
       '--offset=' + options.offset,
