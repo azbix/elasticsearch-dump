@@ -179,7 +179,7 @@ var dump = function () {
       analyzer: indexOutput
     }
 
-    return isIndexToIndex ? filesData : indexData
+    return isIndexToIndex ? indexData : filesData
   }
 
   var jobs = []
