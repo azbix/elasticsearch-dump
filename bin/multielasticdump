@@ -21,8 +21,15 @@ var complete = 0
 var indexCounter = 0
 var sleepTime = 1000
 var workTimeout
+var isIndexToIndex;
 
-function unique (arr, keepLast) {
+var directions = {
+  indexToIndex: 'dump-to-es',
+  indexToFiles: 'dump-to-files',
+  filesToIndex: 'load-from-files'
+}
+
+function unique(arr, keepLast) {
   return arr.filter(function (value, index, array) {
     return keepLast ? array.indexOf(value, index + 1) < 0 : array.indexOf(value) === index
   })
@@ -72,8 +79,10 @@ if (!options.output) { throw new Error('--output is required') }
 log('info', 'We are performing : ' + options.direction)
 log('info', 'options: ' + JSON.stringify(options))
 
+isIndexToIndex = options.direction == directions.indexToIndex
+
 var matchRegExp = new RegExp(options.match, 'i')
-if (options.direction === 'dump') {
+if (options.direction === directions.indexToFiles) {
   if (!fs.existsSync(options.output)) { throw new Error('--output does not exist') }
   request.get(options.input + '/_aliases', function (err, response) {
     if (err) { log('err', err); process.exit() }
@@ -89,7 +98,7 @@ if (options.direction === 'dump') {
   })
 }
 
-if (options.direction === 'load') {
+if (options.direction === directions.indexToFiles) {
   if (!fs.existsSync(options.input)) { throw new Error('--input() does not exist') }
   fs.readdir(options.input, function (err, data) {
     if (err) { log('error', err); throw new Error('Something went wrong reading the list of files') }
@@ -103,6 +112,21 @@ if (options.direction === 'load') {
     log('info', 'list of indexes' + JSON.stringify(matchedIndexes))
 
     loadWork()
+  })
+}
+
+if (options.direction == directions.indexToIndex) {
+  request.get(options.input + '/_aliases', function (err, response) {
+    if (err) { log('err', err); process.exit() }
+    response = JSON.parse(response.body)
+    if (!Array.isArray(response)) {
+      response = Object.keys(response)
+    }
+    matchedIndexes = response.filter(function (index) {
+      return matchRegExp.test(index)
+    })
+
+    dumpWork()
   })
 }
 
@@ -144,21 +168,23 @@ var dump = function () {
   }
 
   indexCounter++
-
+  
   var input = options.input + '/' + encodeURIComponent(index)
-  var outputData = options.output + '/' + index + '.json'
+  var outputData = isIndexToIndex ? options.output + '/' + encodeURIComponent(index) 
+                                  : options.output + '/' + index + '.json'
+
   var outputMapping = options.output + '/' + index + '.mapping.json'
   var outputAnalyzer = options.output + '/' + index + '.analyzer.json'
-
+    
   var jobs = []
 
   jobs.push(function (done) {
-    log('info', 'dumping ' + input + ' to ' + outputMapping)
+    log('info', 'dumping ' + input + ' to ' + outputData)
 
     var mappingChild = fork(path.join(__dirname, 'elasticdump'), [
       '--type=' + 'mapping',
       '--input=' + input,
-      '--output=' + outputMapping
+      '--output=' + outputData
     ])
 
     mappingChild.on('close', function (code) {
@@ -171,12 +197,12 @@ var dump = function () {
   })
 
   jobs.push(function (done) {
-    log('info', 'analyzer ' + input + ' to ' + outputAnalyzer)
+    log('info', 'analyzer ' + input + ' to ' + outputData)
 
     var analyzerChild = fork(path.join(__dirname, 'elasticdump'), [
       '--type=' + 'analyzer',
       '--input=' + input,
-      '--output=' + outputAnalyzer
+      '--output=' + outputData
     ])
 
     analyzerChild.on('close', function (code) {
